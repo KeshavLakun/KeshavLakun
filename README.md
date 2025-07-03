@@ -1,6 +1,6 @@
 - 👋 Hi, I’m Keshav R. Lakun.
 - 👀 I’m interested in anything concerning Programming/Coding/Web Development.
-- 🌱 I’m currently an associate app developer @ Accenture.
+- 🌱 I’m currently a fullstack Software Engineer.
 - 💞️ I’m looking to collaborate on any project.
 - 📫 How to reach me: keshavlakun@gmail.com or on LinkedIn (Roshan Lakun)
 
