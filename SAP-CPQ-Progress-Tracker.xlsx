@@ -1,0 +1,421 @@
+name: Generate SAP CPQ Progress Tracker
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - excel/sap-cpq-tracker
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install openpyxl==3.1.5
+
+      - name: Generate Excel file
+        run: |
+          cat > generate_sap_cpq_progress_tracker.py << 'PYCODE'
+          from datetime import datetime
+          from typing import List
+          from openpyxl import Workbook
+          from openpyxl.styles import Font, PatternFill, Alignment
+          from openpyxl.worksheet.datavalidation import DataValidation
+          from openpyxl.formatting.rule import FormulaRule, DataBarRule
+          from openpyxl.chart import BarChart, Reference, PieChart
+          from openpyxl.worksheet.table import Table, TableStyleInfo
+
+          THEME = {
+              "bg": "FFFFFF",
+              "primary": "2D77EF",
+              "secondary": "00B4D8",
+              "accent1": "8338EC",
+              "accent2": "FF006E",
+              "accent3": "FB5607",
+              "success": "2A9D8F",
+              "warning": "FFC300",
+              "danger": "E63946",
+              "muted": "E9ECEF",
+              "text": "212529",
+              "header": "0B2239",
+          }
+
+          STATUS_LIST = ["Not Started", "In Progress", "Blocked", "Complete"]
+          PRIORITY_LIST = ["High", "Medium", "Low"]
+          COMPLEXITY_LIST = ["High", "Medium", "Low"]
+          DONE_LIST = ["Yes", "No"]
+
+          def t(cat, sub, cap, name, desc, priority="Medium", complexity="Medium", hours=2, prereq=""):
+              return (cat, sub, cap, name, desc, priority, complexity, hours, prereq)
+
+          TASKS: List[tuple] = [
+              t("Foundation & Admin","Tenant","Foundational Setup","Review tenant overview & navigation","Understand key areas: Admin, Catalog, Pricing, Quoting","Low","Low",1),
+              t("Foundation & Admin","Branding","Branding","Configure company branding & logo","Set theme colors, favicon, and header logo","Low","Low",1),
+              t("Foundation & Admin","Company Settings","Org Settings","Setup company profile & defaults","Time zone, locale, numbering, formats","Medium","Low",1),
+              t("Foundation & Admin","Currencies & UoM","Globalization","Enable currencies & units of measure","Add conversions, set base currency","Medium","Medium",2),
+              t("Foundation & Admin","Languages","Localization","Enable languages & translations","Prepare for multilingual UI & templates","Medium","Medium",2),
+              t("Foundation & Admin","Email","Communications","Configure email server & sender policies","SMTP, DKIM/SPF prerequisites, test email","High","Medium",2),
+              t("Foundation & Admin","Storage","Data Storage","Define attachment & file storage rules","Size limits, storage location, retention","Low","Low",1),
+
+              t("User & Security","User Types","Access Control","Create user types","Define dev/admin/sales/approver types","High","Medium",2),
+              t("User & Security","Roles & Permissions","Access Control","Map permissions to user types","Granular rights for catalog/pricing/quotes","High","Medium",3),
+              t("User & Security","Users","Identity","Provision users & assign user types","Bulk import users; set inactive test users","Medium","Low",1),
+              t("User & Security","Teams","Org Structure","Configure teams/organizations","Segmentation for approvals, visibility","Medium","Medium",2),
+              t("User & Security","Approvers","Approvals","Define approval roles & scopes","Role-based approval levels","Medium","Medium",2),
+              t("User & Security","SSO","Authentication","Configure SSO (SAML/OIDC)","SSO metadata, claims mapping, fallbacks","High","High",4),
+              t("User & Security","Policies","Security Policy","Set password & session policies","Rotation, complexity, idle timeout","Medium","Low",1),
+              t("User & Security","Audit","Auditability","Enable audit logs & review access logs","Compliance & troubleshooting","Medium","Low",1),
+
+              t("Catalog & Products","Categories","Catalog","Create product categories & hierarchy","Logical grouping for navigation","Medium","Low",1),
+              t("Catalog & Products","Products","Item Master","Create simple products","Base SKU, description, images","Medium","Low",1),
+              t("Catalog & Products","Attributes","Modeling","Define product attributes & types","Text, numeric, boolean, list","High","Medium",3),
+              t("Catalog & Products","Constraints","Modeling Rules","Define attribute constraints","Required, ranges, regex validation","High","Medium",2),
+              t("Catalog & Products","BOM","Engineering","Model Bill of Materials","Components, quantities, rollups","High","High",4),
+              t("Catalog & Products","Bundles","Kits/Bundles","Create product bundles/kits","Static & dynamic bundles","High","High",4),
+              t("Catalog & Products","Nested Bundles","Advanced Bundles","Configure nested bundles","Multi-level bundle composition","High","High",4),
+              t("Catalog & Products","Lifecycle","Governance","Set product lifecycle statuses","Draft, Active, Deprecated","Low","Low",1),
+              t("Catalog & Products","Media","Content","Upload images & attachments","Multi-image galleries & spec sheets","Low","Low",1),
+
+              t("Configuration Rules","Rule Types","Compatibility","Build inclusion/exclusion rules","Selected attributes drive availability","High","High",4),
+              t("Configuration Rules","Validation","Guardrails","Create validation rules","Prevent invalid attribute combinations","High","Medium",3),
+              t("Configuration Rules","Defaults","Guided Selling","Set defaulting rules","Auto-select common attributes","Medium","Medium",2),
+              t("Configuration Rules","Auto-Add","Automation","Create auto-add rules","Add mandatory components based on choices","High","Medium",3),
+              t("Configuration Rules","Show/Hide","UX","Conditional show/hide of attributes","Declutter configurator UI","Medium","Low",2),
+              t("Configuration Rules","Configurator UI","UX","Design configurator layout & sections","Logical grouping & tooltips","Medium","Medium",2),
+              t("Configuration Rules","Guided Selling","UX","Build guided selling flows","Progressive questions & recommendations","High","High",4),
+              t("Configuration Rules","Script Events","Extensibility","Hook scripts to configuration events","OnChange, OnLoad, PreSave","High","High",4),
+
+              t("Pricing & Discounting","Pricebooks","Pricing","Create pricebooks & price lists","Base, regional, customer-specific","High","Medium",3),
+              t("Pricing & Discounting","Formulas","Pricing Engine","Create price formulas & expressions","Margin, cost-plus, attribute-driven","High","High",4),
+              t("Pricing & Discounting","Attribute Pricing","Dynamic Pricing","Attribute-based price adjustments","Options impacting price deltas","High","High",3),
+              t("Pricing & Discounting","Tiers","Volume Pricing","Configure tiered/volume pricing","Breakpoints & discounts","Medium","Medium",2),
+              t("Pricing & Discounting","Discounts","Promotions","Set discount rules & approvals","Floor, ceiling, max discretionary","High","High",4),
+              t("Pricing & Discounting","Contracts","Account Pricing","Contract & customer-specific pricing","Account-level negotiated rates","High","High",4),
+              t("Pricing & Discounting","Currency","Globalization","Currency conversion & rounding","FX rates, rounding rules","Medium","Medium",2),
+              t("Pricing & Discounting","Tax","Compliance","Integrate tax engine","AvaTax/SAP tax; jurisdiction mapping","High","High",4),
+              t("Pricing & Discounting","Shipping","Logistics","Configure shipping charges","Tables, carriers, zones","Medium","Medium",2),
+
+              t("Quoting & Workflow","Quote Model","Quoting","Define quote fields & layout","Header, parties, terms, custom fields","Medium","Medium",2),
+              t("Quoting & Workflow","Statuses","Process","Define quote statuses & transitions","Draft, In Review, Approved, Closed","Medium","Low",1),
+              t("Quoting & Workflow","Phases","Process","Configure quote phases & rules","Gates and movement conditions","Medium","Medium",2),
+              t("Quoting & Workflow","Approvals","Governance","Build approval workflows","Chains, thresholds, conditions","High","High",4),
+              t("Quoting & Workflow","Delegation","Operations","Approval delegation & reassignment","Coverage for absences","Medium","Low",1),
+              t("Quoting & Workflow","Numbering","Governance","Quote numbering formats","Patterns, uniqueness, regional schemes","Low","Low",1),
+              t("Quoting & Workflow","Clone & Revise","Productivity","Enable clone, revision & versioning","Track changes across revisions","Low","Low",1),
+              t("Quoting & Workflow","Expiry & Validity","Governance","Set quote validity & expiry rules","Auto-expire, reminders","Medium","Low",1),
+
+              t("Documents & eSignature","Templates","Doc Engine","Build document templates","Header/footer, sections, styles","High","High",4),
+              t("Documents & eSignature","Tokens","Doc Engine","Configure tokens/merge fields","Insert quote, account, and pricing data","High","High",3),
+              t("Documents & eSignature","Conditional Sections","Doc Engine","Conditional content blocks","Language, region, product-based","High","High",3),
+              t("Documents & eSignature","Line Tables","Doc Engine","Line item tables & groups","Bundles, subtotals, discounts","High","High",3),
+              t("Documents & eSignature","Branding","Doc Engine","Branded layouts & watermarks","Corporate identity & disclaimers","Medium","Medium",2),
+              t("Documents & eSignature","DocuSign","eSignature","Integrate DocuSign","Envelope templates & routing","High","High",4),
+              t("Documents & eSignature","Adobe Sign","eSignature","Integrate Adobe Sign","Agreement templates & roles","High","High",4),
+              t("Documents & eSignature","Formats","Doc Engine","Configure output formats","PDF, Word, visibility & storage","Low","Low",1),
+
+              t("UI & UX","Themes","Branding","Configure themes/skins","Colors, typography, iconography","Medium","Low",1),
+              t("UI & UX","Navigation","UX","Customize menus & navigation","Role-based menus and shortcuts","Low","Low",1),
+              t("UI & UX","Home","UX","Design home dashboard","Widgets, quick links, KPIs","Medium","Medium",2),
+              t("UI & UX","Pages","UX","Create custom pages","Static content & embedded resources","Medium","Medium",2),
+              t("UI & UX","Translations","Localization","Translate UI strings","Consistent terminology","Medium","Low",1),
+              t("UI & UX","Help Text","UX","Add tooltips/help text","Reduce onboarding friction","Low","Low",1),
+              t("UI & UX","Search","UX","Configure search synonyms","Improve product discovery","Low","Low",1),
+
+              t("Scripting & Extensibility","Global Scripts","Platform","Author global scripts","Shared functions & utilities","High","High",4),
+              t("Scripting & Extensibility","Line Scripts","Platform","Write line-item scripts","Line-level calculations & flags","High","High",4),
+              t("Scripting & Extensibility","Configurator Scripts","Platform","Script configurator events","OnChange validations & effects","High","High",4),
+              t("Scripting & Extensibility","Error Handling","Reliability","Implement structured error handling","Graceful failures & user messages","High","Medium",3),
+              t("Scripting & Extensibility","Logging","Observability","Add structured logging","Correlation IDs & contexts","Medium","Medium",2),
+              t("Scripting & Extensibility","REST API","Integration","Explore and use REST APIs","CRUD for quotes/products/prices","High","High",4),
+              t("Scripting & Extensibility","Webhooks","Integration","Configure outbound webhooks","Events to downstream systems","High","High",3),
+              t("Scripting & Extensibility","Custom Actions","UX","Add custom actions/buttons","Trigger scripts & flows","Medium","Medium",2),
+              t("Scripting & Extensibility","Scheduled Jobs","Automation","Set scheduled jobs","Syncs, cleanup, periodic tasks","Medium","Medium",2),
+
+              t("Data & Integrations","Import/Export","Data Ops","Bulk import products/attributes/prices","Use templates; validate results","High","Medium",3),
+              t("Data & Integrations","Mappings","Data Ops","Define data mappings & IDs","Stable keys & reconciliation","High","High",3),
+              t("Data & Integrations","ERP (S/4)","Integration","Connect to SAP S/4HANA/ERP","Product/pricing sync & quote order","High","High",4),
+              t("Data & Integrations","CRM (SFDC)","Integration","Integrate Salesforce CRM","Accounts/opportunities & quote sync","High","High",4),
+              t("Data & Integrations","SAP Commerce","Integration","Integrate SAP Commerce Cloud","Catalog & cart/checkout alignment","High","High",4),
+              t("Data & Integrations","Middleware","Integration","Configure SAP CPI/other iPaaS","Transforms, retries, DLQs","High","High",4),
+              t("Data & Integrations","Auth","Security","Secure integrations & secrets","Rotate credentials & limit scopes","High","Medium",2),
+
+              t("Environments & DevOps","Strategy","Release Mgmt","Define Dev/Test/Prod strategy","Branching & promotion policies","Medium","Medium",2),
+              t("Environments & DevOps","Packages","Release Mgmt","Build migration packages","Change sets with dependencies","High","High",3),
+              t("Environments & DevOps","Versioning","Governance","Version control of config/scripts","Semantic version & changelog","Medium","Medium",2),
+              t("Environments & DevOps","Rollback","Reliability","Plan rollback procedures","Backups & restore validation","High","Medium",2),
+              t("Environments & DevOps","Feature Flags","Release Mgmt","Use feature toggles","Gradual rollout & kill switches","Medium","Medium",2),
+              t("Environments & DevOps","Backups","Ops","Schedule config/data backups","Frequency & retention","Medium","Low",1),
+              t("Environments & DevOps","Maintenance","Ops","Plan maintenance windows","Communications & approvals","Low","Low",1),
+
+              t("Performance & Monitoring","Indexing","Performance","Optimize catalog indexing","Faster search & filters","Medium","Medium",2),
+              t("Performance & Monitoring","Caching","Performance","Leverage caching where possible","Reduce repeated computations","Medium","Medium",2),
+              t("Performance & Monitoring","Configurator","Performance","Profile configurator performance","Rule hotspots & optimizations","High","High",3),
+              t("Performance & Monitoring","Quote Perf","Performance","Analyze quote calculation time","Pricing rules & scripts","High","High",3),
+              t("Performance & Monitoring","Monitoring","Observability","Set up monitoring dashboards","KPIs & error rates","Medium","Medium",2),
+              t("Performance & Monitoring","Alerts","Observability","Configure alerts","SLAs & thresholds","Medium","Medium",2),
+              t("Performance & Monitoring","Logs","Observability","Centralize and review logs","Correlation & retention","Medium","Medium",2),
+
+              t("Testing & QA","Test Data","Quality","Create representative test datasets","Products, customers, prices","Medium","Low",1),
+              t("Testing & QA","Unit Tests","Quality","Unit test rules & scripts","Inputs/outputs & edge cases","High","High",3),
+              t("Testing & QA","Regression","Quality","Build regression suites","Critical flows coverage","High","High",3),
+              t("Testing & QA","UAT","Quality","Plan & conduct UAT","Scenarios & sign-offs","Medium","Medium",2),
+              t("Testing & QA","Automation","Quality","Automate via APIs where feasible","Smoke & nightly checks","High","High",3),
+              t("Testing & QA","Performance Tests","Quality","Run load/perf tests","Concurrent quotes/configurations","High","High",3),
+
+              t("Governance & Best Practices","Naming","Standards","Define naming conventions","Products, attributes, rules, scripts","Low","Low",1),
+              t("Governance & Best Practices","Docs","Standards","Document configurations","Designs, decisions, runbooks","Medium","Medium",2),
+              t("Governance & Best Practices","Code Review","Standards","Enforce code review for scripts","Peer review checklist","Medium","Medium",2),
+              t("Governance & Best Practices","Security Review","Standards","Perform security reviews","Least privilege & secrets handling","High","Medium",2),
+              t("Governance & Best Practices","DRY","Standards","Refactor for DRY & reuse","Utilities, shared rules","Medium","Medium",2),
+              t("Governance & Best Practices","Training","Standards","Peer training & knowledge share","Brown bags & demos","Low","Low",1),
+
+              t("Troubleshooting & Support","Rule Conflicts","Support","Diagnose rule conflicts","Overlap & precedence issues","High","High",3),
+              t("Troubleshooting & Support","Pricing Issues","Support","Resolve pricing discrepancies","Rounding & conversion pitfalls","High","High",3),
+              t("Troubleshooting & Support","Approvals Stuck","Support","Unblock stuck approvals","Chain resolution & reassignment","Medium","Medium",2),
+              t("Troubleshooting & Support","Doc Errors","Support","Fix document generation issues","Token mappings & templates","Medium","High",3),
+              t("Troubleshooting & Support","Integration Failures","Support","Debug integration errors","Retries, DLQs, mapping fixes","High","High",3),
+              t("Troubleshooting & Support","Debugging","Support","Apply systematic debugging","Logs, repro steps, isolation","Medium","Medium",2),
+              t("Troubleshooting & Support","Escalations","Support","Define escalation paths","SLA, ownership, comms","Low","Low",1),
+
+              t("Localization & Currency","Translations","Localization","Translate catalog & UI strings","Consistency across languages","Medium","Medium",2),
+              t("Localization & Currency","Multi-Currency","Globalization","Validate multi-currency pricing","FX rate sourcing and timing","High","High",3),
+              t("Localization & Currency","Taxes","Compliance","Localize taxes & rules","Country/state compliance","High","High",3),
+              t("Localization & Currency","Formats","Localization","Date/number format alignment","Locale-aware formatting","Low","Low",1),
+              t("Localization & Currency","RTL","Accessibility","Right-to-left locale support","UI testing & adjustments","Medium","High",3),
+
+              t("Analytics & Reporting","Built-in","Reporting","Explore built-in reports","Adopt for quick insights","Low","Low",1),
+              t("Analytics & Reporting","Custom","Reporting","Build custom reports/KPIs","By product, region, margin","Medium","Medium",2),
+              t("Analytics & Reporting","Dashboards","Reporting","Design dashboards","Status, throughput, approval SLAs","Medium","Medium",2),
+              t("Analytics & Reporting","Exports","Reporting","Export to BI platforms","Power BI/SAC integration","Medium","Medium",2),
+              t("Analytics & Reporting","Scheduling","Reporting","Schedule report distribution","Stakeholder updates","Low","Low",1),
+              t("Analytics & Reporting","Data Dictionary","Governance","Maintain data dictionary","Field definitions & owners","Low","Low",1),
+
+              t("Compliance & Audit","SOX","Compliance","Define SOX controls","Change mgmt & approvals","High","High",3),
+              t("Compliance & Audit","Retention","Compliance","Data retention policies","Quote/doc retention & purge","Medium","Medium",2),
+              t("Compliance & Audit","Consent","Compliance","Consent & privacy handling","Customer PII in quotes/docs","High","High",3),
+              t("Compliance & Audit","Audit Trails","Compliance","Validate audit trail coverage","Key actions & access","Medium","Medium",2),
+          ]
+
+          HEADERS = [
+              "ID","Category","Subcategory","Capability","Task","Description","Priority","Complexity",
+              "Est. Hours","Prerequisites","Status","Done","Owner","Start Date","Due Date","Completed Date","Evidence Link","Notes"
+          ]
+
+          def add_data_sheet(wb):
+              ws = wb.create_sheet("Data")
+              ws.sheet_view.showGridLines = False
+              ws["A1"] = "Status"; ws["B1"] = "Priority"; ws["C1"] = "Complexity"; ws["D1"] = "Done"
+              for i, v in enumerate(STATUS_LIST, start=2): ws[f"A{i}"] = v
+              for i, v in enumerate(PRIORITY_LIST, start=2): ws[f"B{i}"] = v
+              for i, v in enumerate(COMPLEXITY_LIST, start=2): ws[f"C{i}"] = v
+              for i, v in enumerate(DONE_LIST, start=2): ws[f"D{i}"] = v
+              for col in "ABCD":
+                  ws[f"{col}1"].font = Font(bold=True, color="FFFFFF")
+                  ws[f"{col}1"].fill = PatternFill("solid", fgColor=THEME["primary"])
+                  ws.column_dimensions[col].width = 18
+
+          def build_tasks_sheet(wb):
+              ws = wb.create_sheet("Tasks")
+              ws.sheet_view.showGridLines = False
+              ws.merge_cells("A1:R1")
+              cell = ws["A1"]; cell.value = "SAP CPQ Developer Progress Tracker"
+              cell.font = Font(size=16, bold=True, color="FFFFFF")
+              cell.fill = PatternFill("solid", fgColor=THEME["header"])
+              cell.alignment = Alignment(horizontal="center", vertical="center")
+              ws.row_dimensions[1].height = 28
+
+              for col_idx, h in enumerate(HEADERS, start=1):
+                  c = ws.cell(row=2, column=col_idx, value=h)
+                  c.font = Font(bold=True, color="FFFFFF")
+                  c.fill = PatternFill("solid", fgColor=THEME["primary"])
+                  c.alignment = Alignment(horizontal="center")
+              ws.freeze_panes = "A3"
+
+              widths = [6,22,22,22,34,44,12,12,12,24,16,10,16,14,14,16,24,30]
+              for i, w in enumerate(widths, start=1):
+                  ws.column_dimensions[chr(64 + i)].width = w
+
+              dv_status = DataValidation(type="list", formula1="=Data!$A$2:$A$5", allow_blank=True, showErrorMessage=True)
+              dv_priority = DataValidation(type="list", formula1="=Data!$B$2:$B$4", allow_blank=True)
+              dv_complexity = DataValidation(type="list", formula1="=Data!$C$2:$C$4", allow_blank=True)
+              dv_done = DataValidation(type="list", formula1="=Data!$D$2:$D$3", allow_blank=True)
+              for dv in (dv_status, dv_priority, dv_complexity, dv_done): ws.add_data_validation(dv)
+
+              start_row = 3
+              for idx, item in enumerate(TASKS, start=1):
+                  r = start_row + idx - 1
+                  (cat, sub, cap, name, desc, priority, complexity, hours, prereq) = item
+                  row_values = [idx,cat,sub,cap,name,desc,priority,complexity,hours,prereq,"Not Started","No","", "", "", "", "", ""]
+                  for col_idx, val in enumerate(row_values, start=1):
+                      ws.cell(row=r, column=col_idx, value=val)
+                  dv_priority.add(ws.cell(row=r, column=7))
+                  dv_complexity.add(ws.cell(row=r, column=8))
+                  dv_status.add(ws.cell(row=r, column=11))
+                  dv_done.add(ws.cell(row=r, column=12))
+                  ws.cell(row=r, column=5).alignment = Alignment(wrap_text=True)
+                  ws.cell(row=r, column=6).alignment = Alignment(wrap_text=True)
+                  ws.cell(row=r, column=10).alignment = Alignment(wrap_text=True)
+                  ws.cell(row=r, column=18).alignment = Alignment(wrap_text=True)
+
+              last_row = start_row + len(TASKS) - 1
+              table = Table(displayName="TasksTable", ref=f"A2:R{last_row}")
+              style = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
+              table.tableStyleInfo = style
+              ws.add_table(table)
+
+              color_map = {
+                  "Complete": THEME["success"],
+                  "In Progress": THEME["secondary"],
+                  "Blocked": THEME["danger"],
+                  "Not Started": THEME["muted"],
+              }
+              for status, color in color_map.items():
+                  formula = f'$K3="{status}"'
+                  ws.conditional_formatting.add(f"K3:K{last_row}",
+                      FormulaRule(formula=[formula], stopIfTrue=True,
+                                  fill=PatternFill("solid", fgColor=color)))
+              ws.conditional_formatting.add(f"A3:R{last_row}",
+                  FormulaRule(formula=['OR($L3="Yes",$K3="Complete")'],
+                              stopIfTrue=False,
+                              font=Font(color="808080"),
+                              fill=PatternFill("solid", fgColor="F5F5F5")))
+              ws.conditional_formatting.add(f"O3:O{last_row}",
+                  FormulaRule(formula=['AND($O3<TODAY(), $K3<>"Complete", $O3<>"")'],
+                              stopIfTrue=True,
+                              font=Font(color=THEME["danger"]),
+                              fill=PatternFill("solid", fgColor="FFE5E9")))
+              ws.conditional_formatting.add(f"G3:G{last_row}",
+                  FormulaRule(formula=['$G3="High"'],
+                              stopIfTrue=True,
+                              fill=PatternFill("solid", fgColor=THEME["warning"])))
+              ws.conditional_formatting.add(f"I3:I{last_row}",
+                  DataBarRule(start_type="num", start_value=0, end_type="num", end_value=8,
+                              color=THEME["accent1"], showValue="None"))
+
+          def build_dashboard(wb):
+              ws = wb.create_sheet("Dashboard")
+              ws.sheet_view.showGridLines = False
+              ws.merge_cells("A1:H1")
+              c = ws["A1"]; c.value = "SAP CPQ Progress Dashboard"
+              c.font = Font(size=18, bold=True, color="FFFFFF")
+              c.fill = PatternFill("solid", fgColor=THEME["header"])
+              c.alignment = Alignment(horizontal="center", vertical="center")
+              ws.row_dimensions[1].height = 30
+
+              ws["A3"]="Total Tasks"; ws["A4"]="Completed"; ws["A5"]="In Progress"; ws["A6"]="Blocked"; ws["A7"]="Not Started"; ws["A8"]="Overall % Complete"
+              for r in range(3,9):
+                  ws[f"A{r}"].font = Font(bold=True)
+                  ws[f"A{r}"].fill = PatternFill("solid", fgColor=THEME["muted"])
+              ws["B3"]='=ROWS(Tasks!A3:INDEX(Tasks!A:A, MATCH(9.999999E+307, Tasks!A:A)))'
+              ws["B4"]='=COUNTIF(Tasks!K:K,"Complete")'
+              ws["B5"]='=COUNTIF(Tasks!K:K,"In Progress")'
+              ws["B6"]='=COUNTIF(Tasks!K:K,"Blocked")'
+              ws["B7"]='=COUNTIF(Tasks!K:K,"Not Started")'
+              ws["B8"]='=IFERROR(B4/B3,0)'; ws["B8"].number_format = "0%"
+
+              ws["D3"] = "Status Distribution"; ws["D3"].font = Font(bold=True, color=THEME["text"])
+              pie = PieChart()
+              labels = Reference(ws, min_col=1, min_row=4, max_row=7)
+              data = Reference(ws, min_col=2, min_row=4, max_row=7)
+              pie.add_data(data, titles_from_data=False)
+              pie.set_categories(labels)
+              pie.title = "Status"; pie.height = 10; pie.width = 14; pie.style = 10; pie.firstSliceAng = 90
+              ws.add_chart(pie, "D4")
+
+              ws["A11"] = "Category"; ws["B11"] = "Total"; ws["C11"] = "Complete"; ws["D11"] = "% Complete"
+              for col in "ABCD":
+                  ws[f"{col}11"].font = Font(bold=True, color="FFFFFF")
+                  ws[f"{col}11"].fill = PatternFill("solid", fgColor=THEME["primary"])
+                  ws.column_dimensions[col].width = 22
+              categories = []
+              for item in TASKS:
+                  if item[0] not in categories: categories.append(item[0])
+              start_row = 12
+              for i, cat in enumerate(categories):
+                  r = start_row + i
+                  ws[f"A{r}"] = cat
+                  ws[f"B{r}"] = f'=COUNTIF(Tasks!B:B, A{r})'
+                  ws[f"C{r}"] = f'=COUNTIFS(Tasks!B:B, A{r}, Tasks!K:K, "Complete")'
+                  ws[f"D{r}"] = f'=IFERROR(C{r}/B{r},0)'; ws[f"D{r}"].number_format = "0%"
+                  if i % 2 == 0:
+                      for col in "ABCD": ws[f"{col}{r}"].fill = PatternFill("solid", fgColor="F8F9FA")
+              bar = BarChart(); bar.type = "col"; bar.title = "Category % Complete"; bar.y_axis.title = "% Complete"; bar.x_axis.title = "Category"
+              cats_ref = Reference(ws, min_col=1, min_row=start_row, max_row=start_row + len(categories) - 1)
+              data_ref = Reference(ws, min_col=4, min_row=start_row - 1, max_row=start_row + len(categories) - 1)
+              bar.add_data(data_ref, titles_from_data=True); bar.set_categories(cats_ref); bar.height = 12; bar.width = 28
+              ws.add_chart(bar, "F11")
+              ws.merge_cells("A2:H2")
+              ws["A2"] = "Use filters and the Status dropdown on the Tasks sheet. Due dates turn red if overdue and not Complete. Mark Done=Yes to dim a row."
+              ws["A2"].alignment = Alignment(wrap_text=True)
+              ws["A2"].fill = PatternFill("solid", fgColor="EEF6FF")
+
+          def build_readme_sheet(wb):
+              ws = wb.create_sheet("How to Use")
+              ws.sheet_view.showGridLines = False
+              ws.merge_cells("A1:H1")
+              ws["A1"] = "How to Use This Tracker"
+              ws["A1"].font = Font(size=16, bold=True, color="FFFFFF")
+              ws["A1"].fill = PatternFill("solid", fgColor=THEME["header"])
+              ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+              ws.row_dimensions[1].height = 26
+              content = [
+                  "- Go to the Tasks sheet and update Status (Not Started, In Progress, Blocked, Complete).",
+                  "- Optionally set Done=Yes to gray out completed/archived items while keeping Status history.",
+                  "- Use Priority/Complexity to plan. Est. Hours has data bars for quick effort scanning.",
+                  "- Set Start/Due/Completed dates; overdue Due Dates turn red if Status is not Complete.",
+                  "- Track evidence (links to docs, PRs, screenshots) and Notes for context.",
+                  "- The Dashboard shows overall progress and per-category completion with charts.",
+                  "- You can filter the TasksTable by Category, Priority, Status, or Owner.",
+                  "- Extend the Data sheet lists to add custom priorities or complexities if needed.",
+                  f"- Generated on: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC",
+              ]
+              row = 3
+              for line in content:
+                  ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=8)
+                  ws.cell(row=row, column=1, value=line)
+                  ws.cell(row=row, column=1).alignment = Alignment(wrap_text=True)
+                  row += 1
+              for col in range(1, 9):
+                  ws.column_dimensions[chr(64 + col)].width = 22
+
+          def main():
+              wb = Workbook()
+              default = wb.active; wb.remove(default)
+              add_data_sheet(wb); build_tasks_sheet(wb); build_dashboard(wb); build_readme_sheet(wb)
+              out = "SAP-CPQ-Progress-Tracker.xlsx"
+              wb.save(out)
+              print(f"Created {out}")
+
+          if __name__ == "__main__":
+              main()
+          PYCODE
+          python generate_sap_cpq_progress_tracker.py
+
+      - name: Commit and push Excel
+        run: |
+          set -e
+          BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add SAP-CPQ-Progress-Tracker.xlsx
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Add SAP-CPQ-Progress-Tracker.xlsx (auto-generated)"
+            git push origin "HEAD:${BRANCH}"
+          fi
